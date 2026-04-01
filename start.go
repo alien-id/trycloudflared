@@ -9,16 +9,15 @@ import (
 	"github.com/cloudflare/cloudflared/connection"
 	"github.com/cloudflare/cloudflared/edgediscovery"
 	"github.com/cloudflare/cloudflared/edgediscovery/allregions"
+	"github.com/cloudflare/cloudflared/client"
 	"github.com/cloudflare/cloudflared/features"
 	"github.com/cloudflare/cloudflared/ingress"
 	"github.com/cloudflare/cloudflared/logger"
-	"github.com/cloudflare/cloudflared/metrics"
 	"github.com/cloudflare/cloudflared/orchestration"
 	"github.com/cloudflare/cloudflared/signal"
 	"github.com/cloudflare/cloudflared/supervisor"
 	"github.com/cloudflare/cloudflared/tlsconfig"
 	"github.com/cloudflare/cloudflared/tunnelrpc/pogs"
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli/v2"
 	"runtime"
@@ -26,20 +25,24 @@ import (
 )
 
 func CreateCloudflareTunnel(ctx context.Context, port int) (string, error) {
-	metrics.RegisterBuildInfo(BuildType, BuildTime, Version)
-
-	clientID, err := uuid.NewRandom()
-	if err != nil {
-		return "", errors.Wrap(err, "can't generate connector UUID") // does it ever happen?
-	}
-
 	// todo make this configurable
 	logTransport := logger.Create(logger.CreateConfig(
 		"",
 		false,
+		false,
 		"",
 		"",
 	))
+
+	featureSelector, err := features.NewFeatureSelector(ctx, "", nil, false, logTransport)
+	if err != nil {
+		return "", errors.Wrap(err, "can't create feature selector")
+	}
+
+	clientConfig, err := client.NewConfig(Version, runtime.GOOS+"_"+runtime.GOARCH, featureSelector)
+	if err != nil {
+		return "", errors.Wrap(err, "can't create client config")
+	}
 
 	observer := connection.NewObserver(logTransport, logTransport)
 
@@ -60,7 +63,6 @@ func CreateCloudflareTunnel(ctx context.Context, port int) (string, error) {
 			Ingress:            &ing,
 			WarpRouting:        ingress.NewWarpRoutingConfig(&config.WarpRoutingConfig{}),
 			ConfigurationFlags: map[string]string{},
-			WriteTimeout:       0, // write-stream-timeout, default is 0
 		},
 		[]pogs.Tag{},
 		[]ingress.Rule{},
@@ -101,16 +103,14 @@ func CreateCloudflareTunnel(ctx context.Context, port int) (string, error) {
 		}
 		edgeTLSConfigs[p] = edgeTLSConfig
 	}
-	tunnel, err := createTunnel(clientID)
+	tunnel, err := createTunnel()
 	if err != nil {
 		return "", err
 	}
 
 	tunnelConfig := &supervisor.TunnelConfig{
-		GracePeriod:                         30,    // grace-period, default is 30
-		ReplaceExisting:                     false, // force
-		OSArch:                              runtime.GOOS + "_" + runtime.GOARCH,
-		ClientID:                            clientID.String(),
+		ClientConfig:                        clientConfig,
+		GracePeriod:                         30, // grace-period, default is 30
 		EdgeAddrs:                           []string{},
 		Region:                              "",
 		EdgeIPVersion:                       allregions.Auto, // Default is ipv4
@@ -128,7 +128,6 @@ func CreateCloudflareTunnel(ctx context.Context, port int) (string, error) {
 		NamedTunnel:                         tunnel,
 		ProtocolSelector:                    protocolSelector,
 		EdgeTLSConfigs:                      edgeTLSConfigs,
-		FeatureSelector:                     &features.FeatureSelector{},
 		MaxEdgeAddrRetries:                  8,               // max-edge-addr-retries, default is 8
 		RPCTimeout:                          5 * time.Second, // rpc-timeout, default is 5s
 		WriteStreamTimeout:                  time.Second * 0,

@@ -3,16 +3,14 @@ package trycloudflared
 import (
 	"encoding/json"
 	"github.com/cloudflare/cloudflared/connection"
-	"github.com/cloudflare/cloudflared/tunnelrpc/pogs"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"io"
 	"net/http"
-	"runtime"
 	"time"
 )
 
-func createTunnel(clientID uuid.UUID) (*connection.TunnelProperties, error) {
+func createTunnel() (*connection.TunnelProperties, error) {
 	// can be slow
 	timeout := 30 * time.Second
 	client := http.Client{
@@ -58,12 +56,7 @@ func createTunnel(clientID uuid.UUID) (*connection.TunnelProperties, error) {
 		AccountTag:   parsedResponse.Result.AccountTag,
 		TunnelSecret: parsedResponse.Result.Secret,
 		TunnelID:     tunnelID,
-	}, QuickTunnelUrl: parsedResponse.Result.Hostname, Client: pogs.ClientInfo{
-		ClientID: clientID[:],
-		Features: []string{},
-		Version:  Version,
-		Arch:     runtime.GOOS + "_" + runtime.GOARCH,
-	}}, nil
+	}, QuickTunnelUrl: parsedResponse.Result.Hostname}, nil
 }
 
 type CreateTunnelResponse struct {
